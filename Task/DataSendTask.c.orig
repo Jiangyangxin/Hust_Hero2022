@@ -1,0 +1,75 @@
+/**********************************************************************************************************
+ * @文件     DataSendTask.c
+ * @说明     数据发送
+ * @版本  	 V1.0
+ * @作者     黄志雄
+ * @日期     2019.10
+**********************************************************************************************************/
+#include "main.h"
+/*--------------内部变量-------------------*/
+unsigned char SendToPC_Buff[PC_RECVBUF_SIZE];
+/*--------------外部变量-------------------*/
+
+
+/**********************************************************************************************************
+*函 数 名: USART6_SendtoPC
+*功能说明: 弹丸数和云台姿态交替发送,发送姿态频率是子弹数的4倍
+					 PC_Sendflag 0x00待机·   0x10辅瞄   0x20能量机关   0x30Tx2关机
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+int SendtoTx2Tick;
+extern unsigned char	PC_Sendflag;
+short Gyro_Pitch_Integer, Gyro_Pitch_Decimal;
+short Gyro_Yaw_Integer, Gyro_Yaw_Decimal;
+extern int SendToTx2BullectCnt;
+extern GM6020Receive_Typedef		Gimbal_Motor_Yaw,Gimbal_Motor_Pitch;
+extern Gyro_t Gyro;
+void USART6_SendtoPC(void)
+{
+    SendtoTx2Tick++;
+
+    DMA_ClearFlag(DMA2_Stream7, DMA_FLAG_TCIF7);
+
+    Gyro_Pitch_Integer = (short)Gimbal_Motor_Pitch.Angle;
+    Gyro_Pitch_Decimal = (short)((Gimbal_Motor_Pitch.Angle - Gyro_Pitch_Integer)*10000);
+
+    Gyro_Yaw_Integer = (short)Gyro.Yaw;
+    Gyro_Yaw_Decimal = (short)((Gyro.Yaw - Gyro_Yaw_Integer)*10000);
+
+    SendToPC_Buff[0] = '!';
+
+    SendToPC_Buff[1] = PC_Sendflag;
+
+    memcpy(&SendToPC_Buff[2],&Gyro_Pitch_Integer,1);
+    memcpy(&SendToPC_Buff[3],&Gyro_Pitch_Decimal,1);
+    memcpy(&SendToPC_Buff[4],&Gyro_Yaw_Integer,1);
+    memcpy(&SendToPC_Buff[5],&Gyro_Yaw_Decimal,1); 
+    memcpy(&SendToPC_Buff[6],&SendToTx2BullectCnt,2);
+
+    SendToPC_Buff[7] = '#';
+    Append_CRC8_Check_Sum(SendToPC_Buff+1,PC_SENDBUF_SIZE-2);
+    DMA_Cmd(DMA2_Stream7, ENABLE);
+}
+
+/**********************************************************************************************************
+*函 数 名: TX2_task
+*功能说明: 通信任务
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+uint32_t TX2_high_water;
+void TX2_task(void *pvParameters)
+{
+
+    while (1) {
+
+        USART6_SendtoPC();
+
+        vTaskDelay(10);
+
+#if INCLUDE_uxTaskGetStackHighWaterMark
+        TX2_high_water = uxTaskGetStackHighWaterMark(NULL);
+#endif
+    }
+}

@@ -1,0 +1,228 @@
+#include "main.h"
+
+#include "FreeRTOSConfig.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "tim.h"
+/*--------------------------全局变量----------------------------*/
+Pid_Typedef	PidBigPullerSpeed,PidBigFrictSpeed[2],PidBigPullerPos;
+int SendToTx2BullectCnt;
+/*--------------------------引用外部变量----------------------------*/
+//extern Jugement_t Juge;
+extern HeroStatus_typedef			HeroStatus;
+extern M3508Receive_Typedef		BigFrict[2],BigPuller;
+extern GM6020Receive_Typedef	Gimbal_Motor_Yaw,Gimbal_Motor_Pitch;
+extern RC_Ctl_t RC_Ctl;
+/*--------------------------内部变量----------------------------*/
+
+static Shoot_typedef BigShoot;
+static short ShootInitFlag;
+
+short BigFrictSpeed = 5000;
+short BigPullerSpeed = 500;
+short BigPuller_PosAngle = 8191;
+short TrigFlag = 0;
+unsigned char BigFrictFlag = 0;
+/**
+  * @brief  发射机构动作模式
+  * @param
+  * @retval
+  */
+void Shoot_Act_Cal(void)
+{
+    if(ShootInitFlag != 1)
+    {
+        BigShoot.Priod = 300;
+        PidBigPullerPos.SetPoint = ZeroCheck_BigPullerPosOutPut();
+        BigShoot.RemainNum = 0;
+        ShootInitFlag = 1;
+    }
+
+    if((ABS(BigFrict[0].RealSpeed)>1000)&&(ABS(BigFrict[0].RealSpeed)>1000))	//摩擦轮转动标志位
+        BigFrictFlag = 1;   //超速
+    else
+        BigFrictFlag = 0;
+    Shoot_Fire_Cal();
+}
+/**
+  * @brief  发射机构开火模式
+  * @param
+  * @retval
+  */
+static int count = 0;
+void Shoot_Fire_Cal(void)
+{
+    PidBigFrictSpeed[0].SetPoint = BigFrictSpeed;
+    PidBigFrictSpeed[1].SetPoint = -BigFrictSpeed;
+
+    if(HeroStatus.CtrMode == RemoteMode)
+    {
+        if(RC_Ctl.rc.s1 == 3)
+            BigShoot.PullerCmd = 1;
+        else if(RC_Ctl.rc.s1 != 3)
+        {
+            BigShoot.PullerCmd = 0;
+            BigShoot.Shoot_Finish = 0;
+        }
+    }
+    else if(HeroStatus.CtrMode == MouseKeyMode)
+    {
+        if(RC_Ctl.mouse.press_l == 1)
+        {
+            BigShoot.PullerCmd = 1;
+        }
+        else if(RC_Ctl.mouse.press_l == 0)
+        {
+            BigShoot.PullerCmd = 0;
+            BigShoot.Shoot_Finish = 0;
+        }
+        if(RC_Ctl.key.v == 1)//解除热量限制
+        {
+            BigShoot.Shoot_Finish = 0;
+        }
+    }
+	count ++;
+	if(count == 300){
+        PidBigPullerPos.SetPoint += BigPullerDir * BigPuller_PosAngle+1600;
+		count = 0;
+	}
+//    if(BigShoot.PullerCmd == 1&&BigShoot.Shoot_Finish == 0)
+//    {
+//        PidBigPullerPos.SetPoint += BigPullerDir * BigPuller_PosAngle+1600;
+//        BigShoot.Shoot_Finish = 1;
+//    }
+//堵转检测
+//		if(ABS(PidBigPullerPos.PreError)>400)
+//			BigShoot.StuckTimeCnt++;
+//		else
+//			BigShoot.StuckTimeCnt = 0;
+//		if(BigShoot.StuckTimeCnt>800)
+//		{
+//			BigShoot.StuckTimeCnt = 0;
+//			PidBigPullerPos.SetPoint -= BigPullerDir * BigPuller_PosAngle+1600;
+//			PidBigPullerSpeed.SetPoint = 0;
+//		}
+
+
+}
+
+/**
+  * @brief  发射机构掉电模式
+  * @param
+  * @retval
+  */
+void Shoot_Cease_Cal(void)
+{
+    if(ShootInitFlag != 2)
+        ShootInitFlag = 2;
+    //Laser_OFF;
+    PidBigFrictSpeed[0].SetPoint = 0;
+    PidBigFrictSpeed[1].SetPoint = 0;
+    PidBigPullerSpeed.SetPoint = 0;
+    PidBigPullerPos.SetPoint = ZeroCheck_BigPullerPosOutPut();;
+}
+
+/**
+  * @brief  发射机构pid计算,Frict[0]给负速度，Frict[1]给正速度
+  * @param
+  * @retval
+  */
+void ShootCur_Pid_Cal(void)
+{
+    short BigFrictCur[2], BigPullerCur;
+
+    PidBigFrictSpeed[0].ActPoint = BigFrict[0].RealSpeed;
+    PidBigFrictSpeed[1].ActPoint = BigFrict[1].RealSpeed;
+    BigFrictCur[0] = (short)LIMIT_MAX_MIN(PID_Calc(&PidBigFrictSpeed[0]),16000,-16000);
+    BigFrictCur[1] = (short)LIMIT_MAX_MIN(PID_Calc(&PidBigFrictSpeed[1]),16000,-16000);
+
+    PidBigPullerPos.ActPoint = ZeroCheck_BigPullerPosOutPut();
+    PidBigPullerSpeed.ActPoint = BigPuller.RealSpeed;
+    PidBigPullerSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidBigPullerPos),5000,-5000);
+    BigPullerCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidBigPullerSpeed),16000,-16000);
+
+    if(HeroStatus.ShootMode == Shoot_CeaseMode)
+    {
+        BigPullerCur = 0;
+    }
+    CAN1_FrictSend(BigFrictCur[0],BigFrictCur[1],0,BigPullerCur);
+
+
+
+}
+/**
+  * @brief  大拨盘速度环
+  * @param
+  * @retval
+  */
+void Pid_BigPullerSpeed(void)
+{
+    PidBigPullerSpeed.SetPoint = 0.0f;
+    PidBigPullerSpeed.P = 20.0f;
+    PidBigPullerSpeed.I = 0.0;
+    PidBigPullerSpeed.D	= 0.0f;
+    PidBigPullerSpeed.IMax = 1000;
+}
+
+/**
+  * @brief  大拨盘位置环
+  * @param
+  * @retval
+  */
+void Pid_BigPullerPos(void)
+{
+    PidBigPullerPos.SetPoint = 0.0f;
+    PidBigPullerPos.P = 0.1f;
+    PidBigPullerPos.I = 0.0f;
+    PidBigPullerPos.D	= 0.0f;
+    PidBigPullerPos.IMax = 1000;
+}
+
+/**
+  * @brief  大摩擦轮
+  * @param
+  * @retval
+  */
+void Pid_BigFrictSpeed(void)
+{
+    PidBigFrictSpeed[0].SetPoint = 0.0f;
+    PidBigFrictSpeed[0].P = 25;
+    PidBigFrictSpeed[0].I = 0;
+    PidBigFrictSpeed[0].D	= 0;
+    PidBigFrictSpeed[0].IMax = 0;
+
+    PidBigFrictSpeed[1].SetPoint = 0.0f;
+    PidBigFrictSpeed[1].P = 25;
+    PidBigFrictSpeed[1].I = 0;
+    PidBigFrictSpeed[1].D	= 0;
+    PidBigFrictSpeed[1].IMax = 0;
+}
+
+uint32_t SHOOT_high_water;
+
+void SHOOT_task(void *pvParameters)
+{
+    Pid_BigFrictSpeed();
+    Pid_BigPullerSpeed();
+    Pid_BigPullerPos();
+    while (1) {
+        ZeroCheck_cal();
+
+        if(HeroStatus.ShootMode == Shoot_Act_Mode) {
+            Shoot_Fire_Cal();
+            Shoot_Act_Cal();
+			// SteeringEngine_Set();
+        }
+        else if(HeroStatus.ShootMode == Shoot_CeaseMode)
+        {
+            Shoot_Cease_Cal();
+        }
+        ShootCur_Pid_Cal();
+		
+        vTaskDelay(1); /* 延时 500 个 tick */
+
+#if INCLUDE_uxTaskGetStackHighWaterMark
+        SHOOT_high_water = uxTaskGetStackHighWaterMark(NULL);
+#endif
+    }
+}

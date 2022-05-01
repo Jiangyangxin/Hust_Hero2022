@@ -1,0 +1,275 @@
+#include "main.h"
+
+#include "FreeRTOSConfig.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "tim.h"
+/*--------------------------全局变量----------------------------*/
+HeroStatus_typedef	HeroStatus;
+//short last_rc_s1;
+short Mouse_Key_Flag = 0;
+extern unsigned char	PC_Sendflag;
+Key_typedef key_status;
+
+/*--------------------------引用外部变量----------------------------*/
+extern Shoot_typedef 		BigShoot;
+extern Pid_Typedef			PidBigPullerSpeed;
+extern Pid_Typedef			PidBigFrictSpeed[2],PidSmlFrictSpeed[2];
+extern short 						BigFrictSpeed,SmlFrictSpeed;
+extern Chassis_typedef 	F105;
+extern unsigned char bigBulletGetFlag;
+extern short bigBulletGetCnt;
+extern float GimbalPitPos,GimbalYawPos;
+extern short turnHeadExitFlag;
+extern RC_Ctl_t	RC_Ctl;
+extern M3508Receive_Typedef		BigFrict[2];
+extern float slowFac;
+extern unsigned char superCapAutoFlag;
+/*--------------------------内部变量----------------------------*/
+/**
+  * @brief  控制模式
+  * @param
+  * @retval
+  */
+
+void SetInputMode(RC_Ctl_t* RC_Ctl)
+{
+    switch(RC_Ctl->rc.s2)  //这2个键的作用是共享的，不局限于某一个
+    {
+    case 1:
+        HeroStatus.CtrMode=MouseKeyMode;
+        break;
+    case 2:
+        HeroStatus.CtrMode=CeaseMode;
+        break;
+    case 3:
+        HeroStatus.CtrMode=RemoteMode;
+        break;
+    }
+}
+
+/** @brief  断电模式
+   *@param  None
+   *@retval None
+*/
+short ShutdownCnt = 0;
+void Powerdown_Process(void)
+{
+    if(Mouse_Key_Flag != 2)
+    {
+		PC_Sendflag= 0x00;//要确保发送给PC的数据是为0
+        Mouse_Key_Flag = 2;
+    }
+    HeroStatus.GimbalMode = Gimbal_CeaseMode;
+    HeroStatus.ChassisMode = Chassis_CeaseMode;
+    HeroStatus.ShootMode = Shoot_CeaseMode;
+	if((RC_Ctl.rc.ch0 < 400) && (RC_Ctl.rc.ch2 > 1500)) //接近于极限
+		ShutdownCnt++;
+	if(ShutdownCnt > 100)
+		PC_Sendflag= 0x30; //100毫秒
+}
+
+/** @brief  遥控器模式
+   *@param  None
+   *@retval None
+*/
+extern Pid_Typedef	PidBigPullerSpeed,PidBigPullerPos;
+extern short BigPullerSpeed ;
+void Remote_Process(RC_Ctl_t* RC_Ctl)
+{
+    if(Mouse_Key_Flag != 3)
+    {
+        Mouse_Key_Flag = 3;
+        PC_Sendflag= 0x50;
+        HeroStatus.GimbalMode  = Gimbal_Act_Mode;
+        HeroStatus.ChassisMode = Chassis_Act_Mode;
+        HeroStatus.ShootMode = Shoot_Act_Mode; 
+
+    }
+    F105.SuperCapCmd = 0;
+    switch(RC_Ctl->rc.s1)
+    {
+    case 1:
+        HeroStatus.GimbalMode = Gimbal_Act_Mode;
+		BigShoot.Shoot_Finish=1;//停止发射子弹
+		HeroStatus.ShootMode = Shoot_CeaseMode;
+		PidBigPullerPos.SetPoint=0;
+
+        break;
+    case 2:
+        //HeroStatus.ShootMode = Shoot_Act_Mode;
+        HeroStatus.GimbalMode = Gimbal_Armor_Mode;
+		HeroStatus.ChassisMode = Chassis_CeaseMode;//辅瞄状态下关闭底盘跟随，方便调试
+	
+		BigShoot.Shoot_Finish=1;//停止发射子弹
+		HeroStatus.ShootMode = Shoot_CeaseMode;
+		PidBigPullerPos.SetPoint=0;
+        break;
+
+
+    case 3:
+        HeroStatus.GimbalMode = Gimbal_Act_Mode;
+        HeroStatus.ShootMode = Shoot_Act_Mode;
+		BigShoot.Shoot_Finish=0;//开始发射
+		
+        break;
+    default:
+        break;
+    }
+}
+
+/** @brief  键鼠模式
+						w,s,a,d					前后左右行进
+						shift						电容加速
+						ctrl						扭腰
+						press_l					射击（单击）
+						press_r					辅瞄
+						q, e						左旋，右旋
+						x								手动补弹
+						b								对接（单击）
+						g								单轴
+						v								紧急解除热量限制
+						z								使用自动加速
+						r								慢速爬坡
+   *@param  None
+   *@retval None
+*/
+void Mouse_Key_Process(RC_Ctl_t* RC_Ctl)
+{
+    if(Mouse_Key_Flag != 1)
+    {
+        HeroStatus.GimbalMode = Gimbal_Act_Mode;
+        HeroStatus.ChassisMode = Chassis_Act_Mode;
+        HeroStatus.ShootMode = Shoot_Act_Mode;
+        PC_Sendflag= 0x50;
+        Mouse_Key_Flag = 1;
+    }
+
+/**********************************超级电容控制*****************************/
+	if(RC_Ctl->key.shift == 1)
+		F105.SuperCapCmd = 1;
+	else
+		F105.SuperCapCmd = 0;
+
+	key_status.z_rise_flag = RC_Ctl->key.z - key_status.pre_key_z; //差值
+	key_status.pre_key_z = RC_Ctl->key.z;
+	if(key_status.z_rise_flag == 1)
+	{
+		(superCapAutoFlag == 1)?(superCapAutoFlag = 0):(superCapAutoFlag = 1); //取反
+	}
+
+    /**********************************慢速爬坡*****************************/
+    if(RC_Ctl->key.r == 1)
+        slowFac = 0.2;
+    else
+        slowFac = 1;
+    /**********************************陀螺控制*****************************/
+    if(RC_Ctl->key.ctrl == 1)
+    {
+        if(HeroStatus.ChassisMode == Chassis_Act_Mode) //如果本来就是陀螺模式就不用选择了
+            HeroStatus.ChassisMode = Chassis_SelfProtect_Mode;
+    }
+    else //没有用陀螺模式
+    {
+        if(HeroStatus.ChassisMode == Chassis_SelfProtect_Mode)
+            HeroStatus.ChassisMode = Chassis_Act_Mode; //如果已经用来陀螺模式就禁止
+    }
+
+    /**********************************发射控制*****************************/
+    switch(RC_Ctl->rc.s1)
+    {
+    case 3:  //之前是  2
+        HeroStatus.ShootMode = Shoot_Act_Mode; 
+        break;
+
+    case 1:
+        HeroStatus.ShootMode = Shoot_CeaseMode;
+        break;
+    default:
+        break;
+    }
+    /**********************************辅瞄控制*****************************/
+    if(RC_Ctl->mouse.press_r == 1)  
+    {
+        if(HeroStatus.GimbalMode == Gimbal_Act_Mode)
+        {
+            Laser_OFF; //辅瞄模式关激光
+            HeroStatus.GimbalMode = Gimbal_Armor_Mode;
+			PC_Sendflag= 0x10; //发送信号给PC让它来控制发弹
+        }
+    }
+    else
+    {
+        if(HeroStatus.GimbalMode == Gimbal_Armor_Mode)
+        {
+            Laser_ON;
+            HeroStatus.GimbalMode = Gimbal_Act_Mode;
+			PC_Sendflag= 0x50; //送信号给PC不让它来控制发弹
+        }
+    }
+/**********************************转头180度补弹*****************************/
+	key_status.b_rise_flag = RC_Ctl->key.b - key_status.pre_key_b;
+	key_status.pre_key_b = RC_Ctl->key.b;
+	if(key_status.b_rise_flag == 1)
+	{
+		if((HeroStatus.ChassisMode == Chassis_Act_Mode) && (HeroStatus.GimbalMode == Gimbal_Act_Mode)) 
+		{	//确保这两个都是正常模式
+			Laser_OFF; 
+			HeroStatus.ShootMode = Shoot_CeaseMode;
+			HeroStatus.ChassisMode = Chassis_Single_Mode;
+			HeroStatus.GimbalMode = Gimbal_TurnHeadMode;
+		}
+		else if((HeroStatus.ChassisMode == Chassis_Single_Mode) && (HeroStatus.GimbalMode == Gimbal_TurnHeadMode))
+			turnHeadExitFlag = 1; //一旦进入配置完成后就退出
+	}
+
+    /**********************************切换单轴模式*****************************/
+    if(RC_Ctl->key.g == 1)
+    {
+        if((HeroStatus.ChassisMode == Chassis_Act_Mode) && (HeroStatus.GimbalMode == Gimbal_Act_Mode))
+        {
+            HeroStatus.ChassisMode = Chassis_Single_Mode;
+            HeroStatus.GimbalMode = Gimbal_SingleMode;
+        }
+    }
+    else
+    {
+        if((HeroStatus.ChassisMode == Chassis_Single_Mode) && (HeroStatus.GimbalMode == Gimbal_SingleMode))
+        {	//不清楚为什么只有一次进入就行，现在明白，是因为只有按下相应的键才能进入这额函数，所以不需要延时判断。
+            HeroStatus.ChassisMode = Chassis_Act_Mode;
+            HeroStatus.GimbalMode = Gimbal_Act_Mode;
+        }
+    }
+
+}
+uint32_t ActionControl_high_water;
+
+void ActionControl_task(void *pvParameters)
+{
+
+    while (1) {
+
+        SetInputMode(&RC_Ctl);
+        switch(HeroStatus.CtrMode)
+        {
+        case MouseKeyMode:
+            Mouse_Key_Process(&RC_Ctl);
+            break;
+        case RemoteMode:
+            Remote_Process(&RC_Ctl);
+            break;
+        case CeaseMode:
+            Powerdown_Process();
+            break;
+        default:
+            break;
+        }
+
+        vTaskDelay(2); /* 延时 500 个 tick */
+
+#if INCLUDE_uxTaskGetStackHighWaterMark
+        ActionControl_high_water = uxTaskGetStackHighWaterMark(NULL);
+#endif
+    }
+}
+

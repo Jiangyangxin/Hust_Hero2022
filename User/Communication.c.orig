@@ -1,0 +1,24 @@
+
+#include "Communication.h"
+/*主要做全局标志的通信，有24个标志位可用
+因为这个是32位存储，所以要从低地址开始访问
+
+位1 底盘掉线 位2 遥控器掉线 位3 云台掉线 位4 裁判系统掉线
+位5 卡尔曼模式开始标志位
+*/
+void communicate_init(void){
+EventGroupHandle_t global_flag = xEventGroupCreate();
+xEventGroupSetBits(global_flag,1 << 0);//只有为1的值才对标志组有影响
+xEventGroupSetBits(global_flag,1 << 1);
+xEventGroupSetBits(global_flag,1 << 2);
+xEventGroupSetBits(global_flag,1 << 3);
+xEventGroupSetBits(global_flag,1 << 4);
+xEventGroupSetBits(global_flag,1 << 5);
+xEventGroupSetBits(global_flag,1 << 2);
+xEventGroupSetBits(global_flag,1 << 1);
+xEventGroupSetBits(global_flag,1 << 2);
+	
+	
+
+}
+ 

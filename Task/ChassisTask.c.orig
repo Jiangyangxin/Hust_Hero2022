@@ -1,0 +1,221 @@
+#include "main.h"
+
+#include "FreeRTOSConfig.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "tim.h"
+/*--------------------------全局变量----------------------------*/
+Pid_Typedef	PidChassisAngle,PidChassisSpeed;
+short ChassisInitFlag = 0;
+Chassis_typedef F105;
+float slowFac = 1;
+short F105WrigCnt,F105WrigT = 1000;
+unsigned char superCapAutoFlag = 1;
+short F105_DisConect;//功率板掉线检测
+/*--------------------------引用外部变量----------------------------*/
+extern HeroStatus_typedef	HeroStatus;
+extern RC_Ctl_t RC_Ctl; 
+extern Jugement_t Juge;
+extern GM6020Receive_Typedef Gimbal_Motor_Yaw;
+/*--------------------------内部变量----------------------------*/
+/**
+  * @brief  底盘正常动作
+  * @param
+  * @retval
+  */
+int	YawOutPut;
+void Chassis_Act_Cal(void)
+{
+
+    float theta;
+    YawOutPut = ZeroCheck_YawOutPut();
+    if(ChassisInitFlag != 1)
+    {
+        ChassisInitFlag = 1;
+        F105.PowerdownCmd = 0;
+        PidChassisAngle.SetPoint = GIM_YAW_INIT_SCALE;
+    }
+    if(HeroStatus.CtrMode == RemoteMode)
+    {
+        F105.carSpeedx = -(RC_Ctl.rc.ch0 - 1024) * RC_Multiple;
+        F105.carSpeedy = (RC_Ctl.rc.ch1 - 1024) * RC_Multiple;
+    }
+    if(HeroStatus.CtrMode == MouseKeyMode)
+    {
+        F105.carSpeedx = (RC_Ctl.key.a - RC_Ctl.key.d) * KEY_Multiple * (-1.5f) * slowFac;
+        F105.carSpeedy = (RC_Ctl.key.w -	RC_Ctl.key.s) * KEY_Multiple * 1.2f * slowFac;
+    }
+
+    PidChassisAngle.ActPoint = ZeroCheck_YawOutPut();
+    theta = ((float)((YawOutPut- GIM_YAW_INIT_SCALE) % 8192) / 8192) * (2 * 6.28318f);
+
+    //转弯减速，旋转加速
+    F105.carSpeedx = F105.carSpeedx * expf(-(ABS(theta)/1.0f) * (ABS(theta)/1.0f));
+    F105.carSpeedy = F105.carSpeedy * expf(-(ABS(theta)/1.0f) * (ABS(theta)/1.0f));
+
+    F105.carSpeedw = PID_Calc(&PidChassisAngle) * RC_Multiple;
+    F105.carSpeedw = LIMIT_MAX_MIN(F105.carSpeedw,1000,-1000);
+}
+/**
+  * @brief  底盘小陀螺
+  * @param
+  * @retval
+  */
+void Chassis_SelfProtect_Cal()
+{
+	if(HeroStatus.CtrMode == MouseKeyMode)
+	{
+		F105.carSpeedx = (RC_Ctl.key.a - RC_Ctl.key.d) * KEY_Multiple * (-1.5f) * slowFac;
+		F105.carSpeedy = (RC_Ctl.key.w -	RC_Ctl.key.s) * KEY_Multiple * 1.2f * slowFac;
+		F105.carSpeedw	= 300;
+	}
+
+}
+/**
+  * @brief  底盘单轴模式
+  * @param
+  * @retval
+  */
+void Chassis_Single_Cal(void)
+{
+    if(ChassisInitFlag != 3)
+    {
+        ChassisInitFlag = 3;
+        F105.PowerdownCmd = 0;
+        PidChassisAngle.SetPoint = ZeroCheck_YawOutPut();
+    }
+
+    if(HeroStatus.CtrMode == MouseKeyMode)
+    {
+        if(HeroStatus.GimbalMode == Gimbal_TurnHeadMode)
+        {
+            F105.carSpeedx = (RC_Ctl.key.a - RC_Ctl.key.d) * KEY_Multiple ;
+            F105.carSpeedy = (RC_Ctl.key.w -	RC_Ctl.key.s) * KEY_Multiple * (-1.0f);
+            F105.carSpeedw = (RC_Ctl.key.q - RC_Ctl.key.e) * 200 - LIMIT_MAX_MIN(RC_Ctl.mouse.x * 5,200,-200);
+        }
+        else
+        {
+            F105.carSpeedx = (RC_Ctl.key.d - RC_Ctl.key.a) * KEY_Multiple ;
+            F105.carSpeedy = (RC_Ctl.key.s -	RC_Ctl.key.w) * KEY_Multiple * (-1.0f);
+            F105.carSpeedw = (RC_Ctl.key.q - RC_Ctl.key.e) * 200 - LIMIT_MAX_MIN(RC_Ctl.mouse.x * 5,200,-200);
+        }
+    }
+
+    if(HeroStatus.CtrMode == RemoteMode)
+    {
+        F105.carSpeedx = -(RC_Ctl.rc.ch0 - 1024) * RC_Multiple;
+        F105.carSpeedy = (RC_Ctl.rc.ch1 - 1024) * RC_Multiple;
+        F105.carSpeedw = (RC_Ctl.rc.ch2 - 1024) * RC_Multiple;
+    }
+}
+/**
+  * @brief  底盘掉电模式
+  * @param
+  * @retval
+  */
+void Chassis_Cease_Cal(void)
+{
+    if(ChassisInitFlag != 3)
+        ChassisInitFlag = 3;
+
+    F105.carSpeedx = 0;
+    F105.carSpeedy = 0;
+    F105.carSpeedw = 0;
+    F105.PowerdownCmd = 1;
+    F105.SuperCapCmd = 0;
+
+}
+
+/**
+  * @brief  底盘跟随pid初始化
+  * @param
+  * @retval
+  */
+
+void Pid_ChassisAngle(void)
+{
+    PidChassisAngle.SetPoint = 0;
+    PidChassisAngle.P = 0.2;//0.4f;
+    PidChassisAngle.I = 0.0001;
+    PidChassisAngle.D = 0;
+    PidChassisAngle.IMax = 100.0f;
+
+    PidChassisSpeed.SetPoint = 0;
+    PidChassisSpeed.P = 1;
+    PidChassisSpeed.I = 0.0f;
+    PidChassisSpeed.D = 0;
+    PidChassisSpeed.IMax = 100.0f;
+	
+
+}
+/**
+  * @brief  底盘数据发送
+  * @param
+  * @retval
+  */
+
+void Chassis_Cal(void)
+{
+//	if(HeroStatus.ChassisMode != Chassis_CeaseMode)
+//	{
+//		if((superCapAutoFlag == 1) && (HeroStatus.ChassisMode == Chassis_Act_Mode))
+//		{
+//			if(ABS(F105.carSpeedw) > 500)
+//				F105.SuperCapCmd = 1;
+//			if(ABS(F105.carSpeedy) > 200)
+//				F105.CapStartCnt ++;
+//			else
+//				F105.CapStartCnt = 0;
+//
+//			if((F105.CapStartCnt>100) && (F105.CapStartCnt<800))
+//				F105.SuperCapCmd = 1;
+//			else if(F105.CapStartCnt >= 800)
+//				F105.CapStartCnt = 800;
+//		}
+//	  F105.carSpeedw = 0;
+    CAN1_ChassisSend(&F105,0);//Juge.Power_Heat.Chassis_Remain_Power
+//	}
+}
+uint32_t Chassis_high_water;
+
+void CHASSIS_task(void *pvParameters)
+{
+    Pid_ChassisAngle();
+    F105.carSpeedx = 0;
+    F105.carSpeedy = 0;
+    F105.carSpeedw = 0;
+    while (1) {
+        ZeroCheck_cal();
+        if(HeroStatus.ChassisMode == Chassis_CeaseMode)
+            Chassis_Cease_Cal();
+        else if(HeroStatus.ChassisMode == Chassis_Act_Mode)
+            Chassis_Act_Cal();
+        else if(HeroStatus.ChassisMode == Chassis_Single_Mode)
+            Chassis_Single_Cal();
+        else if(HeroStatus.ChassisMode == Chassis_SelfProtect_Mode)
+            Chassis_SelfProtect_Cal();
+        Chassis_Cal();
+        vTaskDelay(1); /* 延时 500 个 tick */
+
+#if INCLUDE_uxTaskGetStackHighWaterMark
+        Chassis_high_water = uxTaskGetStackHighWaterMark(NULL);
+#endif
+    }
+}
+
+/**********************************************************************************************************
+*函 数 名: F105_Rst
+*功能说明: 功率板掉线复位
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+unsigned int Heat_LimitTick;
+void F105_Rst()
+{
+	  Heat_LimitTick++;
+	  if(Heat_LimitTick%50 ==1 )
+	    F105.IsShootAble = 1;
+    else
+			F105.IsShootAble =0;
+	  F105.Limit_Power_k = 0.25;
+}

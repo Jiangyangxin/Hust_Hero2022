@@ -1,0 +1,44 @@
+#ifndef __DATARECEIVETASK_H__
+#define __DATARECEIVETASK_H__
+#include "usart1.h"
+#include "stm32f4xx.h"
+
+typedef struct
+{
+    float RCPitch;
+    float RCYaw;
+    short ReceiveFromTx2BullectCnt;
+    short FrictionWheel_speed;
+    short DisConnect;
+	float RCdistance;
+} PC_Receive_t;
+
+typedef struct
+{
+    float carSpeedx;
+    float carSpeedy;
+    float carSpeedw;
+    unsigned char SuperCapCmd;
+    unsigned char PowerdownCmd;
+    float CapReaimPower;
+    short CapStartCnt;
+	
+	 short IsShootAble;
+     short bulletSpeed_100;
+     float Limit_Power_k;
+	short RobotRed;
+	short HP;
+	short Last_HP;
+} Chassis_typedef;
+
+typedef struct {
+    short Angle;
+    short RealSpeed;
+    short Current;
+} BodanMotorReceive_Typedef;
+
+void PCReceive(unsigned char PCReceivebuffer[]);
+
+void F105_Rst(void);
+
+#endif

@@ -1,0 +1,61 @@
+.\objects\usart1.o: ..\Mylib\usart1.c
+.\objects\usart1.o: ..\User\main.h
+.\objects\usart1.o: ..\User\stm32f4xx.h
+.\objects\usart1.o: ..\Library\CMSIS\core_cm4.h
+.\objects\usart1.o: D:\Program Files (x86)\Arm\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\usart1.o: ..\Library\CMSIS\core_cmInstr.h
+.\objects\usart1.o: ..\Library\CMSIS\core_cmFunc.h
+.\objects\usart1.o: ..\Library\CMSIS\core_cm4_simd.h
+.\objects\usart1.o: ..\User\system_stm32f4xx.h
+.\objects\usart1.o: ..\User\stm32f4xx_conf.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_adc.h
+.\objects\usart1.o: ..\User\stm32f4xx.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_dma.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_exti.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_gpio.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_rcc.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_syscfg.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_tim.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_usart.h
+.\objects\usart1.o: ..\Library\inc\misc.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_can.h
+.\objects\usart1.o: D:\Program Files (x86)\Arm\ARM\ARMCC\Bin\..\include\string.h
+.\objects\usart1.o: D:\Program Files (x86)\Arm\ARM\ARMCC\Bin\..\include\stdio.h
+.\objects\usart1.o: D:\Program Files (x86)\Arm\ARM\ARMCC\Bin\..\include\stdlib.h
+.\objects\usart1.o: ..\Mylib\BSPconfig.h
+.\objects\usart1.o: ..\Library\CMSIS\arm_math.h
+.\objects\usart1.o: ..\Library\CMSIS\core_cm4.h
+.\objects\usart1.o: D:\Program Files (x86)\Arm\ARM\ARMCC\Bin\..\include\math.h
+.\objects\usart1.o: ..\Mylib\tim.h
+.\objects\usart1.o: ..\Mylib\can1.h
+.\objects\usart1.o: ..\Mylib\can2.h
+.\objects\usart1.o: ..\Mylib\usart1.h
+.\objects\usart1.o: ..\Mylib\usart4.h
+.\objects\usart1.o: ..\Mylib\uart5.h
+.\objects\usart1.o: ..\Mylib\usart2.h
+.\objects\usart1.o: ..\Mylib\usart6.h
+.\objects\usart1.o: ..\Mylib\iwdg.h
+.\objects\usart1.o: ..\Library\inc\stm32f4xx_iwdg.h
+.\objects\usart1.o: ..\Mylib\MicroSw.h
+.\objects\usart1.o: ..\Mylib\SteeringEngine.h
+.\objects\usart1.o: ..\User\Trajector_Equ.h
+.\objects\usart1.o: ..\User\main.h
+.\objects\usart1.o: ..\parts\Remote.h
+.\objects\usart1.o: ..\parts\Gyro.h
+.\objects\usart1.o: ..\Assist\ZeroCheck.h
+.\objects\usart1.o: ..\User\DeBug.h
+.\objects\usart1.o: ..\DataHandle\CANSendTask.h
+.\objects\usart1.o: ..\DataHandle\CANReceiveTask.h
+.\objects\usart1.o: ..\Task\ZeroCheckTask.h
+.\objects\usart1.o: ..\Task\ActionControlTask.h
+.\objects\usart1.o: ..\Task\GimbalTask.h
+.\objects\usart1.o: ..\Task\ShootTask.h
+.\objects\usart1.o: ..\Task\ChassisTask.h
+.\objects\usart1.o: ..\parts\Jugement.h
+.\objects\usart1.o: ..\Task\DataSendTask.h
+.\objects\usart1.o: ..\Task\DataReceivetask.h
+.\objects\usart1.o: ..\Task\Start_Task.h
+.\objects\usart1.o: ..\Assist\pid.h
+.\objects\usart1.o: ..\Assist\DataScope_DP.h
+.\objects\usart1.o: ..\Mylib\algorithmOfCRC.h
+.\objects\usart1.o: ..\Mylib\KalmanFilter.h

@@ -1,0 +1,439 @@
+#include "main.h"
+
+#include "FreeRTOSConfig.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "tim.h"
+/*--------------------------全局变量----------------------------*/
+Pid_Typedef	PidYawPos, PidPitchPos, PidYawSpeed, PidPitchSpeed;
+Pid_Typedef	PidYawMotorPos,PidPitchMotorPos,PidYawArmorPos,PidPitchArmorPos;
+unsigned char	PC_Sendflag;
+float GimbalPitPos,GimbalYawPos;
+
+
+/*--------------------------引用外部变量----------------------------*/
+extern Gyro_t Gyro;
+extern short BigFrictSpeed;
+extern HeroStatus_typedef	HeroStatus;
+extern RC_Ctl_t RC_Ctl;
+extern GM6020Receive_Typedef		Gimbal_Motor_Yaw,Gimbal_Motor_Pitch;
+extern Key_typedef key_status;
+extern Chassis_typedef F105;
+extern Pid_Typedef	PidChassisAngle;
+extern Pid_Typedef PidBigFrictSpeed[2];
+/*--------------------------内部变量----------------------------*/
+unsigned char bigBulletGetFlag = 0;
+short bigBulletGetCnt = 0;
+short turnHeadCnt = 0;
+short turnHeadStep = 0;
+short turnHeadExitFlag = 0;
+short GimbalInitFlag = 0; 
+float pitchDegreeMax,pitchDegreeMin,yawDegreeMax,yawDegreeMin;
+/**********************************************************************************************************
+*函 数 名: Gimbal_Act_Cal
+*功能说明: 云台正常运动模式
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Gimbal_Act_Cal(void)
+{
+	
+	if(GimbalInitFlag != 1)
+	{
+		Gimbal_LimitCalc();
+		 PC_Sendflag=0x00;
+		GimbalPitPos = Gyro.Pitch;
+		GimbalYawPos = Gyro.Yaw;
+		bigBulletGetFlag = 0;
+		bigBulletGetCnt =0;
+		GimbalInitFlag = 1;
+	}
+	
+	if(HeroStatus.CtrMode == RemoteMode)
+	{
+		GimbalPitPos -= (RC_Ctl.rc.ch3 - 1024) * 0.0005f;
+		GimbalYawPos += (RC_Ctl.rc.ch2 - 1024) * 0.0005f;
+	}
+	if(HeroStatus.CtrMode == MouseKeyMode)
+	{
+		GimbalPitPos += RC_Ctl.mouse.y * (-0.01f);  //是根据按下时长来定的
+		GimbalYawPos += RC_Ctl.mouse.x * 0.01f;		
+	}
+	//左右旋
+	if(RC_Ctl.key.q == 1)
+		GimbalYawPos -= 0.2f;
+	if(RC_Ctl.key.e == 1)
+		GimbalYawPos += 0.2f;
+	
+	
+	//限位
+	GimbalPitPos = LIMIT_MAX_MIN(GimbalPitPos,pitchDegreeMax,pitchDegreeMin);
+	GimbalYawPos = LIMIT_MAX_MIN(GimbalYawPos,yawDegreeMax,yawDegreeMin);
+	PidPitchPos.SetPoint = GimbalPitPos;
+	PidYawPos.SetPoint   = GimbalYawPos;
+}
+extern PC_Receive_t PC_Receive;
+/**********************************************************************************************************
+*函 数 名: Gimbal_Armor_Cal
+*功能说明: 云台辅瞄模式
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+extern Trajector hero_traj; //弹道方程
+float Recent_angle = 0;
+void Gimbal_Armor_Cal(void) 
+{
+
+	if(GimbalInitFlag != 2)
+	{
+		GimbalPitPos = Gyro.Pitch;
+		GimbalYawPos = Gyro.Yaw;
+		bigBulletGetFlag = 0;
+		bigBulletGetCnt =0;
+		GimbalInitFlag = 2;
+	    PC_Sendflag=0x10;
+		
+	}
+	//Trajector_Equ(0.1,19.1,-0.5);
+	//绝对值还是做差不清楚,需后期调试
+	//Recent_angle = -PC_Receive.RCYaw - hero_traj.Add_GimbalPitchPos;
+	Recent_angle = PC_Receive.RCYaw ;
+	GimbalPitPos = PC_Receive.RCPitch;
+	while(ABS(Gyro.Yaw - Recent_angle)>=180 )
+	{	
+		if(Gyro.Yaw<0)
+		{
+			Recent_angle = Recent_angle - 360;  
+		}
+		else
+		{
+			Recent_angle = Recent_angle + 360; 
+		}
+	}
+
+	 GimbalPitPos = LIMIT_MAX_MIN(GimbalPitPos,pitchDegreeMax,pitchDegreeMin);
+	GimbalYawPos = LIMIT_MAX_MIN(Recent_angle,yawDegreeMax,yawDegreeMin);
+	PidPitchArmorPos.SetPoint = GimbalPitPos;
+	PidYawArmorPos.SetPoint = GimbalYawPos;
+}
+
+short PitchCur,YawCur;
+void GimbalCur_Pid_Cal(void)
+{
+	if(HeroStatus.GimbalMode != Gimbal_CeaseMode)
+	{
+		if(HeroStatus.GimbalMode == Gimbal_Act_Mode)
+		{
+			PidPitchPos.ActPoint = Gyro.Pitch;
+			PidPitchSpeed.ActPoint = Gyro.GY;
+			PidPitchSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidPitchPos),7,-7);
+			PitchCur = -(short)LIMIT_MAX_MIN(PID_Calc(&PidPitchSpeed),30000,-30000);
+			
+			
+			PidYawPos.ActPoint = Gyro.Yaw;
+			PidYawSpeed.ActPoint = - Gyro.GZ;
+			PidYawSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidYawPos),7,-7);
+			YawCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidYawSpeed),30000,-30000);
+		}
+		
+		else if(HeroStatus.GimbalMode == Gimbal_Armor_Mode)
+		{
+			PidPitchArmorPos.ActPoint = Gyro.Pitch;
+			PidPitchSpeed.ActPoint = Gyro.GY;
+			PidPitchSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidPitchArmorPos),7,-7);
+			PitchCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidPitchSpeed),30000,-30000);
+			
+			PidYawArmorPos.ActPoint = Gyro.Yaw;
+			PidYawSpeed.ActPoint = Gyro.GZ;
+			PidYawSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidYawArmorPos),7,-7);
+			YawCur = -(short)LIMIT_MAX_MIN(PID_Calc(&PidYawSpeed),30000,-30000);			
+		}
+		
+		else if(HeroStatus.GimbalMode == Gimbal_TurnHeadMode)
+		{
+			PidPitchMotorPos.ActPoint = ZeroCheck_PitchOutPut();
+			PidPitchSpeed.ActPoint = Gyro.GY;
+			PidPitchSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidPitchMotorPos),7,-7);
+			PitchCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidPitchSpeed),30000,-30000);
+			
+			PidYawMotorPos.ActPoint = ZeroCheck_YawOutPut();
+			PidYawSpeed.ActPoint = Gyro.GZ;
+			PidYawSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidYawMotorPos),7,-7);
+			YawCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidYawSpeed),30000,-30000);
+		}
+		
+		else if(HeroStatus.GimbalMode == Gimbal_SingleMode)
+		{
+			PidPitchMotorPos.ActPoint = ZeroCheck_PitchOutPut();
+			PidPitchSpeed.ActPoint = Gyro.GY;
+			PidPitchSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidPitchMotorPos),7,-7);
+			PitchCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidPitchSpeed),30000,-30000);
+			
+			PidYawMotorPos.ActPoint = ZeroCheck_YawOutPut();
+			PidYawSpeed.ActPoint = Gyro.GZ;
+			PidYawSpeed.SetPoint = LIMIT_MAX_MIN(PID_Calc(&PidYawMotorPos),7,-7);
+			YawCur = (short)LIMIT_MAX_MIN(PID_Calc(&PidYawSpeed),30000,-30000);
+		}
+		
+		CAN2_GimbalSend(PitchCur,YawCur);
+	}
+	else
+	{
+		PitchCur = 0;
+		YawCur = 0;
+		Gimbal_Cease_Cal();
+	}
+}
+
+/**********************************************************************************************************
+*函 数 名: Gimbal_Cease_Cal
+*功能说明: 云台掉电模式
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Gimbal_Cease_Cal(void)
+{
+	if(GimbalInitFlag != 3)
+		GimbalInitFlag = 3;
+	    if((RC_Ctl.rc.ch0<400)&&(RC_Ctl.rc.ch3<400))
+        PC_Sendflag=0xff;
+	PidPitchSpeed.SetPoint = 0;
+	PidYawSpeed.SetPoint = 0;
+	PidPitchPos.SetPoint = Gyro.Pitch;
+	PidYawPos.SetPoint = Gyro.Yaw;
+	PidYawMotorPos.SetPoint = ZeroCheck_YawOutPut();
+	PidPitchMotorPos.SetPoint = ZeroCheck_PitchOutPut();
+	
+	CAN2_GimbalSend(0,0);
+}
+
+/**********************************************************************************************************
+*函 数 名: Gimbal_Turnhead_Cal
+*功能说明: 云台转头90模式
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Gimbal_Turnhead_Cal(void)
+{
+	int YawMotorOutPut,PitMotorOutPut;
+	YawMotorOutPut = ZeroCheck_YawOutPut();
+	PitMotorOutPut = ZeroCheck_PitchOutPut();
+	
+	if(GimbalInitFlag != 4)
+	{
+		GimbalInitFlag = 4;
+		GimbalPitPos = PitMotorOutPut;
+		GimbalYawPos = YawMotorOutPut;
+		turnHeadExitFlag = 0;
+		turnHeadCnt = 0;
+		turnHeadStep = 1;
+	}
+	
+	if(turnHeadStep == 1)
+	{
+		
+		if(GimbalYawPos > GIM_YAW_TURN_ANGLE)
+			GimbalYawPos -= 10;
+		if(turnHeadCnt < 1500)
+			turnHeadCnt ++;
+		else
+			GimbalYawPos =  GIM_YAW_TURN_ANGLE;
+		
+		GimbalPitPos += RC_Ctl.mouse.y * 0.1f;
+		GimbalPitPos = LIMIT_MAX_MIN(GimbalPitPos,GIM_PIT_MAX_SCALE,GIM_PIT_MIN_SCALE);
+//退出补弹
+		if(turnHeadExitFlag == 1)
+		{
+			turnHeadStep = 2;
+			turnHeadCnt = 0;
+			turnHeadExitFlag = 0;
+		}
+	}
+/*********************退出程序**************************************/	
+	if(turnHeadStep == 2)
+	{
+		if(GimbalYawPos < GIM_YAW_INIT_SCALE)
+			GimbalYawPos += 20;
+		if(turnHeadCnt > 1000)
+			turnHeadStep = 3;
+		else
+			turnHeadCnt ++;
+	}
+	if(turnHeadStep == 3)
+	{
+		//Laser_ON;
+//		PidBigFrictSpeed[0].SetPoint = BigFrictSpeed;
+///		PidBigFrictSpeed[1].SetPoint = -BigFrictSpeed;
+		HeroStatus.GimbalMode = Gimbal_Act_Mode;
+		HeroStatus.ChassisMode = Chassis_Act_Mode;
+		PidYawPos.SetPoint = Gyro.Yaw;
+		PidPitchPos.SetPoint = Gyro.Pitch;
+	}
+	
+	PidYawMotorPos.SetPoint = GimbalYawPos;
+	PidPitchMotorPos.SetPoint = GimbalPitPos;
+}
+
+/**********************************************************************************************************
+*函 数 名: Gimbal_Single_Cal
+*功能说明: 云台单轴模式
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Gimbal_Single_Cal(void)
+{
+	int PitMotorOutPut;
+	PitMotorOutPut = ZeroCheck_PitchOutPut();
+	if(GimbalInitFlag != 5)
+	{
+		GimbalInitFlag = 5;
+		GimbalPitPos = PitMotorOutPut;
+		GimbalYawPos = GIM_YAW_INIT_SCALE;
+	}
+	if(HeroStatus.CtrMode == RemoteMode)
+		GimbalPitPos += (RC_Ctl.rc.ch3 - 1024) * (-0.01f);
+	if(HeroStatus.CtrMode == MouseKeyMode)
+		GimbalPitPos += RC_Ctl.mouse.y * 0.1f;
+	
+	GimbalPitPos = LIMIT_MAX_MIN(GimbalPitPos,GIM_PIT_MAX_SCALE,GIM_PIT_MIN_SCALE);
+	PidPitchMotorPos.SetPoint = GimbalPitPos;
+	PidYawMotorPos.SetPoint = GimbalYawPos;
+	
+}
+
+/**********************************************************************************************************
+*函 数 名: Gimbal_LimitCalc
+*功能说明: 云台限位计算
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+
+void Gimbal_LimitCalc(void)
+{
+		pitchDegreeMax = GIM_PIT_MAX_DEGREE + Gyro.Pitch;				//pit轴正负相反
+	  pitchDegreeMin = GIM_PIT_MIN_DEGREE + Gyro.Pitch;		
+
+	  yawDegreeMax 	 = GIM_YAW_MAX_DEGREE + Gyro.Yaw;	
+	  yawDegreeMin 	 = GIM_YAW_MIN_DEGREE + Gyro.Yaw;	
+}
+
+/**********************************************************************************************************
+*函 数 名: Pid_PitchGyroPosSpeed
+*功能说明: Pitch轴陀螺仪，速度环，位置环
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Pid_PitchGyroPosSpeed(void)
+{
+	PidPitchPos.SetPoint = GIM_PIT_INIT_SCALE;// 0.0f;
+	PidPitchPos.P = 0.8f;		//-0.4
+	PidPitchPos.I = 0.0f;	//-0.002		
+	PidPitchPos.D = 0;
+	PidPitchPos.IMax = 50;
+	
+	PidPitchSpeed.SetPoint = 0.0f;
+	PidPitchSpeed.P = -2000;//正常给-8000
+	PidPitchSpeed.I = -0.5;		//1.5
+	PidPitchSpeed.D = 10;
+	PidPitchSpeed.IMax = 100;
+}
+/**********************************************************************************************************
+*函 数 名: Pid_YawGyroPosSpeed
+*功能说明: Yaw轴陀螺仪，速度环，位置环
+*形    参: 无
+*返 回 值: 无  
+**********************************************************************************************************/
+void Pid_YawGyroPosSpeed(void)
+{
+	PidYawPos.SetPoint = 0.0f;
+	PidYawPos.P = 0.6;//-0.35f;								
+	PidYawPos.I = 0;					
+	PidYawPos.D = 10;
+	PidYawPos.IMax = 50;
+	
+	PidYawSpeed.SetPoint = 0.0f;
+	PidYawSpeed.P =3000;// 13000; 						
+	PidYawSpeed.I = 0.05;										
+	PidYawSpeed.D = 1;
+	PidYawSpeed.IMax = 200;
+	
+}
+/**********************************************************************************************************
+*函 数 名: Pid_PitchGyroPosSpeed
+*功能说明: 辅瞄模式Yaw、Pitch位置环
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+void Pid_PitchYaw_ArmorPos(void)
+{
+	PidYawArmorPos.SetPoint = 0.0f;
+	PidYawArmorPos.P = 0.6f;
+	PidYawArmorPos.I = 0.0015f;//-0.002f;
+	PidYawArmorPos.D = 0;
+	PidYawArmorPos.IMax = 100.0f;
+
+	PidPitchArmorPos.SetPoint = 0.0f;
+	PidPitchArmorPos.P = 0.7f;				//0.01
+	PidPitchArmorPos.I = 0.0015f;
+	PidPitchArmorPos.D = 0;
+	PidPitchArmorPos.IMax = 100;
+}
+/**
+  * @brief  yaw电机反馈,pit轴电机反馈，单轴模式
+  * @param   
+  * @retval  
+  */
+void Pid_Yaw_MotorPos(void)
+{
+	
+	PidYawMotorPos.SetPoint = 0.0f;
+	PidYawMotorPos.P = 0.02f;
+	PidYawMotorPos.I = 0;//0.01f;
+	PidYawMotorPos.D = 0;
+	PidYawMotorPos.IMax = 0;
+}
+
+void Pid_Pitch_MotorPos(void){
+	PidPitchMotorPos.SetPoint = 0.0f;
+	PidPitchMotorPos.P = 0.2f;				//0.01
+	PidPitchMotorPos.I = 0.001f;
+	PidPitchMotorPos.D = 0;
+	PidPitchMotorPos.IMax = 100;
+
+}
+/**********************************************************************************************************
+*函 数 名: GIMBAL_task
+*功能说明: 云台任务
+*形    参: 无
+*返 回 值: 无
+**********************************************************************************************************/
+uint32_t GIMBAL_high_water;
+
+void GIMBAL_task(void *pvParameters)
+{
+	 Pid_YawGyroPosSpeed();
+	 Pid_PitchGyroPosSpeed();
+	 Pid_PitchYaw_ArmorPos();
+	 
+   while (1) {
+    ZeroCheck_cal();
+		if(HeroStatus.GimbalMode == Gimbal_Act_Mode) 
+		Gimbal_Act_Cal();
+		else if(HeroStatus.GimbalMode == Gimbal_CeaseMode)
+		 Gimbal_Cease_Cal();
+		else if(HeroStatus.GimbalMode == Gimbal_TurnHeadMode)
+		 Gimbal_Turnhead_Cal();
+		else if(HeroStatus.GimbalMode == Gimbal_SingleMode)
+		 Gimbal_Single_Cal();
+		else if(HeroStatus.GimbalMode == Gimbal_Armor_Mode)
+			Gimbal_Armor_Cal();
+    GimbalCur_Pid_Cal();
+	
+    vTaskDelay(1); /* 延时 500 个 tick */
+}
+}
+
+void GIMBAL_Rst()
+{
+
+}
